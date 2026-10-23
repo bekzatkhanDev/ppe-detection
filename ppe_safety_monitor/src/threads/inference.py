@@ -9,8 +9,8 @@ from src.config import (DEFAULT_MODEL_MODE, MODEL_MODES, DEVICE,
                         CONF_THRESHOLD, IOU_THRESHOLD,
                         OVERLAP_RATIO, CLASS_PERSON, CLASS_HELMET, CLASS_VEST,
                         CLASS_NO_HELMET, CLASS_NO_VEST, REQUIRED_PPE,
-                        COLOR_SAFE, COLOR_DANGER)
-from src.utils import overlap_ratio, draw_box, normalize_class_name
+                        COLOR_SAFE, COLOR_DANGER, DEFAULT_LANGUAGE, tr)
+from src.utils import overlap_ratio, draw_box_unicode, normalize_class_name
 
 VALID_MODEL_MODES = tuple(MODEL_MODES.keys())
 
@@ -51,11 +51,15 @@ class InferenceWorker(QThread):
     result_ready = Signal(object, dict)  # annotated frame, stats
     error = Signal(str)
 
-    def __init__(self, model_path=None, mode=DEFAULT_MODEL_MODE, parent=None):
+    def __init__(self, model_path=None, mode=DEFAULT_MODEL_MODE,
+                 lang=DEFAULT_LANGUAGE, parent=None):
         super().__init__(parent)
         self.mode = mode if mode in MODEL_MODES else DEFAULT_MODEL_MODE
         self.model_path = resolve_model_path(mode=self.mode,
                                              model_path=model_path)
+        # UI language used for on-frame overlay labels. Written from the GUI
+        # thread and read here; a plain str assignment is atomic under the GIL.
+        self.lang = lang
         self.model = None
         self._running = False
         self._latest_frame = None
@@ -177,8 +181,9 @@ class InferenceWorker(QThread):
             if missing_items:
                 stats["unsafe"] += 1
                 color = COLOR_DANGER
-                label = "Unsafe: " + ", ".join(
-                    f"no {m}" for m in missing_items)
+                label = (self._t("ov_unsafe") + ": " + ", ".join(
+                    self._t("ov_no_helmet") if m == "helmet"
+                    else self._t("ov_no_vest") for m in missing_items))
                 for m in missing_items:
                     if m == "helmet":
                         stats["missing_helmet"] += 1
@@ -187,17 +192,24 @@ class InferenceWorker(QThread):
             else:
                 stats["safe"] += 1
                 color = COLOR_SAFE
-                label = "Safe"
-            draw_box(frame, p, f"Person: {label}", color)
+                label = self._t("ov_safe")
+            draw_box_unicode(frame, p,
+                             f"{self._t('ov_person')}: {label}", color)
 
         # Draw PPE boxes
         for h in ppe["helmet"]:
-            draw_box(frame, h, "Helmet", COLOR_SAFE, 1)
+            draw_box_unicode(frame, h, self._t("ov_helmet"), COLOR_SAFE, 1)
         for v in ppe["vest"]:
-            draw_box(frame, v, "Vest", COLOR_SAFE, 1)
+            draw_box_unicode(frame, v, self._t("ov_vest"), COLOR_SAFE, 1)
         for nh in ppe["helmet_missing"]:
-            draw_box(frame, nh, "No Helmet", COLOR_DANGER, 1)
+            draw_box_unicode(frame, nh, self._t("ov_no_helmet_box"),
+                             COLOR_DANGER, 1)
         for nv in ppe["vest_missing"]:
-            draw_box(frame, nv, "No Vest", COLOR_DANGER, 1)
+            draw_box_unicode(frame, nv, self._t("ov_no_vest_box"),
+                             COLOR_DANGER, 1)
 
         return frame, stats
+
+    def _t(self, key, **kwargs):
+        """Translate an overlay label for the current UI language."""
+        return tr(self.lang, key, **kwargs)

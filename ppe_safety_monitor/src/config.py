@@ -59,18 +59,119 @@ FPS_TARGET = 30
 
 
 
-LANGUAGES = ["en", "ru", "kk"]
-TRANSLATIONS = {
-    "en": {"title": "PPE Safety Monitor", "start": "Start Monitoring", "stop": "Stop",
-           "persons": "Persons", "safe": "Safe", "unsafe": "Unsafe",
-           "missing_helmet": "Missing Helmet", "missing_vest": "Missing Vest",
-           "idle": "Idle", "running": "Running", "stopped": "Stopped"},
-    "ru": {"title": "Мониторинг СИЗ", "start": "Запустить", "stop": "Остановить",
-           "persons": "Люди", "safe": "Безопасно", "unsafe": "Опасно",
-           "missing_helmet": "Нет каски", "missing_vest": "Нет жилета",
-           "idle": "Ожидание", "running": "Работает", "stopped": "Остановлено"},
-    "kk": {"title": "ЖКҚ бақылау", "start": "Бастау", "stop": "Тоқтату",
-           "persons": "Адамдар", "safe": "Қауіпсіз", "unsafe": "Қауіпті",
-           "missing_helmet": "Каска жоқ", "missing_vest": "Жилет жоқ",
-           "idle": "Күту", "running": "Жұмыс", "stopped": "Тоқтатылды"},
+# Supported UI languages: code -> native display name.
+LANGUAGES = {
+    "en": "English",
+    "ru": "Русский",
+    "kk": "Қазақша",
 }
+DEFAULT_LANGUAGE = "en"
+
+TRANSLATIONS = {
+    "en": {
+        "title": "PPE Safety Monitor",
+        "controls": "Controls",
+        "model_weights": "Model weights:",
+        "language": "Language:",
+        "statistics": "Statistics",
+        "start": "Start Monitoring",
+        "stop": "Stop",
+        "persons": "Persons",
+        "safe": "Safe",
+        "unsafe": "Unsafe",
+        "missing_helmet": "Missing Helmet",
+        "missing_vest": "Missing Vest",
+        "camera_not_started": "Camera not started",
+        "idle": "Idle",
+        "running": "Running ({mode} weights)",
+        "stopped": "Stopped",
+        "error": "Error: {msg}",
+        "model_mode": "Model mode: {mode}",
+        # Overlay labels drawn onto video frames (OpenCV).
+        "ov_person": "Person",
+        "ov_safe": "Safe",
+        "ov_unsafe": "Unsafe",
+        "ov_no_helmet": "no helmet",
+        "ov_no_vest": "no vest",
+        "ov_helmet": "Helmet",
+        "ov_vest": "Vest",
+        "ov_no_helmet_box": "No Helmet",
+        "ov_no_vest_box": "No Vest",
+    },
+    "ru": {
+        "title": "Мониторинг СИЗ",
+        "controls": "Управление",
+        "model_weights": "Веса модели:",
+        "language": "Язык:",
+        "statistics": "Статистика",
+        "start": "Запустить мониторинг",
+        "stop": "Остановить",
+        "persons": "Люди",
+        "safe": "Безопасно",
+        "unsafe": "Опасно",
+        "missing_helmet": "Нет каски",
+        "missing_vest": "Нет жилета",
+        "camera_not_started": "Камера не запущена",
+        "idle": "Ожидание",
+        "running": "Работает ({mode})",
+        "stopped": "Остановлено",
+        "error": "Ошибка: {msg}",
+        "model_mode": "Режим модели: {mode}",
+        "ov_person": "Человек",
+        "ov_safe": "Безопасно",
+        "ov_unsafe": "Опасно",
+        "ov_no_helmet": "нет каски",
+        "ov_no_vest": "нет жилета",
+        "ov_helmet": "Каска",
+        "ov_vest": "Жилет",
+        "ov_no_helmet_box": "Нет каски",
+        "ov_no_vest_box": "Нет жилета",
+    },
+    "kk": {
+        "title": "ЖКҚ бақылауы",
+        "controls": "Басқару",
+        "model_weights": "Модель салмақтары:",
+        "language": "Тіл:",
+        "statistics": "Статистика",
+        "start": "Бақылауды бастау",
+        "stop": "Тоқтату",
+        "persons": "Адамдар",
+        "safe": "Қауіпсіз",
+        "unsafe": "Қауіпті",
+        "missing_helmet": "Каска жоқ",
+        "missing_vest": "Жилет жоқ",
+        "camera_not_started": "Камера іске қосылмаған",
+        "idle": "Күту",
+        "running": "Жұмыс істеуде ({mode})",
+        "stopped": "Тоқтатылды",
+        "error": "Қате: {msg}",
+        "model_mode": "Модель режимі: {mode}",
+        "ov_person": "Адам",
+        "ov_safe": "Қауіпсіз",
+        "ov_unsafe": "Қауіпті",
+        "ov_no_helmet": "каска жоқ",
+        "ov_no_vest": "жилет жоқ",
+        "ov_helmet": "Каска",
+        "ov_vest": "Жилет",
+        "ov_no_helmet_box": "Каска жоқ",
+        "ov_no_vest_box": "Жилет жоқ",
+    },
+}
+
+
+def tr(lang, key, **kwargs):
+    """Translate ``key`` for ``lang``, falling back to English.
+
+    Any missing key or language degrades gracefully instead of raising,
+    so a partially translated catalog can never crash the UI.
+    """
+    entry = TRANSLATIONS.get(lang) or TRANSLATIONS[DEFAULT_LANGUAGE]
+    text = entry.get(key)
+    if text is None:
+        text = TRANSLATIONS[DEFAULT_LANGUAGE].get(key, key)
+    if kwargs:
+        try:
+            return text.format(**kwargs)
+        except (KeyError, IndexError):
+            return text
+    return text
