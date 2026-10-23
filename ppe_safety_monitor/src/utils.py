@@ -1,7 +1,13 @@
 """Utility helpers for PPE Safety Monitor."""
+import threading
+
 import cv2
 import numpy as np
 from PySide6.QtGui import QImage, QPixmap
+
+
+# Default BGR colour for label text drawn on top of coloured chips.
+COLOR_TEXT_DEFAULT = (255, 255, 255)
 
 
 def normalize_class_name(name):
@@ -13,26 +19,20 @@ def normalize_class_name(name):
     return str(name).strip().lower().replace("-", "_")
 
 
-def iou(box_a, box_b):
-    """Compute IoU between two (x1,y1,x2,y2) boxes."""
-    ax1, ay1, ax2, ay2 = box_a
-    bx1, by1, bx2, by2 = box_b
+def clamp_box(box, frame_shape):
+    """Clamp a float (x1, y1, x2, y2) box to the frame's pixel bounds.
 
-    inter_x1 = max(ax1, bx1)
-    inter_y1 = max(ay1, by1)
-    inter_x2 = min(ax2, bx2)
-    inter_y2 = min(ay2, by2)
-
-    inter_w = max(0, inter_x2 - inter_x1)
-    inter_h = max(0, inter_y2 - inter_y1)
-    inter_area = inter_w * inter_h
-
-    area_a = max(0, ax2 - ax1) * max(0, ay2 - ay1)
-    area_b = max(0, bx2 - bx1) * max(0, by2 - by1)
-    union = area_a + area_b - inter_area
-    if union <= 0:
-        return 0.0
-    return inter_area / union
+    Models occasionally emit slightly out-of-bounds or negative coordinates;
+    drawing them unclipped can raise or wrap around numpy slices. Returns
+    integer coordinates with x1 <= x2 and y1 <= y2 guaranteed.
+    """
+    fh, fw = frame_shape[:2]
+    x1, y1, x2, y2 = box
+    x1 = max(0, min(int(round(x1)), fw - 1))
+    y1 = max(0, min(int(round(y1)), fh - 1))
+    x2 = max(x1, min(int(round(x2)), fw - 1))
+    y2 = max(y1, min(int(round(y2)), fh - 1))
+    return x1, y1, x2, y2
 
 
 def overlap_ratio(box_a, box_b):
@@ -74,32 +74,24 @@ def cv_to_pixmap(frame):
     return QPixmap.fromImage(qimg.copy())
 
 
-def draw_box(frame, box, label, color, thickness=2):
-    x1, y1, x2, y2 = [int(v) for v in box]
-    cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
-    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-    cv2.rectangle(frame, (x1, y1 - th - 6), (x1 + tw + 4, y1), color, -1)
-    cv2.putText(frame, label, (x1 + 2, y1 - 4),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-    return frame
-
-
 # --- Unicode-aware overlay text ---------------------------------------------
 # cv2.putText only renders ASCII; Cyrillic / Kazakh labels would show up as
 # "????" on the video overlay. For non-ASCII strings we rasterise the text
 # with Qt (which handles full Unicode) and blit it onto the frame instead.
 
-_QT_FONT = None
+_QT_FONT_LOCAL = threading.local()
 _QT_FONT_PIXEL_SIZE = 18
 
 
 def _qt_font():
-    global _QT_FONT
-    if _QT_FONT is None:
+    """Return this thread's QFont (Qt objects must not be shared across threads)."""
+    font = getattr(_QT_FONT_LOCAL, "font", None)
+    if font is None:
         from PySide6.QtGui import QFont
-        _QT_FONT = QFont("Segoe UI", -1, QFont.Weight.Normal)
-        _QT_FONT.setPixelSize(_QT_FONT_PIXEL_SIZE)
-    return _QT_FONT
+        font = QFont("Segoe UI", -1, QFont.Weight.Normal)
+        font.setPixelSize(_QT_FONT_PIXEL_SIZE)
+        _QT_FONT_LOCAL.font = font
+    return font
 
 
 def _render_text_qt(text):
@@ -185,11 +177,18 @@ def put_text_unicode(frame, text, org, color_bgr=(255, 255, 255)):
     return frame
 
 
-def draw_label_box(frame, x1, y1, x2, label, color):
-    """Draw a filled label chip above a box and write the label inside it.
+def draw_label_box(frame, x1, y1, x2, label, color, text_color=None):
+    """Draw a filled label chip for a detection box and write the label in it.
 
-    Unicode-safe counterpart of the label portion of :func:`draw_box`.
+    The chip is placed above the box's top edge when there is room; otherwise
+    it falls back to just below the top edge (inside the box) so labels are
+    never clipped off-screen for detections touching the frame's top row.
+    Coordinates are clamped to the frame bounds.
     """
+    fh, fw = frame.shape[:2]
+    if text_color is None:
+        text_color = COLOR_TEXT_DEFAULT
+
     try:
         label.encode("ascii")
         is_ascii = True
@@ -206,18 +205,36 @@ def draw_label_box(frame, x1, y1, x2, label, color):
             (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
             is_ascii = True
 
-    cv2.rectangle(frame, (x1, y1 - th - 6), (x1 + tw + 4, y1), color, -1)
-    if is_ascii:
-        cv2.putText(frame, label, (x1 + 2, y1 - 4),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    pad_y = 4          # vertical padding inside the chip
+    chip_h = th + 2 * pad_y
+    # Prefer above the box; fall back inside the box near the top edge.
+    inset = min(6, max(2, fh // 100))
+    if y1 - chip_h >= 0:
+        chip_top = y1 - chip_h
     else:
-        put_text_unicode(frame, label, (x1 + 2, y1 - th - 4))
+        chip_top = min(y1 + inset, fh - 1)
+    chip_bottom = min(chip_top + chip_h, fh - 1)
+    chip_right = min(x1 + tw + 4, fw - 1)
+
+    cv2.rectangle(frame, (x1, chip_top), (chip_right, chip_bottom),
+                  color, -1)
+    if is_ascii:
+        baseline = chip_top + pad_y + th
+        cv2.putText(frame, label, (x1 + 2, baseline),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2)
+    else:
+        put_text_unicode(frame, label, (x1 + 2, chip_top + pad_y),
+                         color_bgr=text_color)
     return frame
 
 
-def draw_box_unicode(frame, box, label, color, thickness=2):
-    """``draw_box`` variant that supports non-ASCII (translated) labels."""
-    x1, y1, x2, y2 = [int(v) for v in box]
+def draw_box_unicode(frame, box, label, color, thickness=2, text_color=None):
+    """Draw a detection rectangle plus a Unicode-safe label chip.
+
+    Box coordinates are clamped to the frame before drawing so slightly
+    out-of-bounds model outputs cannot crash the pipeline.
+    """
+    x1, y1, x2, y2 = clamp_box(box, frame.shape)
     cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
-    draw_label_box(frame, x1, y1, x2, label, color)
+    draw_label_box(frame, x1, y1, x2, label, color, text_color=text_color)
     return frame

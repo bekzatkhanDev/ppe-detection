@@ -15,8 +15,6 @@ MODEL_MODES = {
     "onnx": os.path.join(MODELS_DIR, "best.onnx"),
 }
 DEFAULT_MODEL_MODE = "pt"
-# Kept for backwards compatibility; overridden by the selected mode at runtime.
-MODEL_PATH = MODEL_MODES[DEFAULT_MODEL_MODE]
 
 # Device selection for inference: None = auto (CUDA if available else CPU),
 # or force e.g. "cpu" / "cuda:0". Applies to both pt and onnx modes.
@@ -30,20 +28,34 @@ DEFAULT_CAMERA = 0
 # {0: helmet, 1: gloves, 2: vest, 3: boots, 4: goggles, 5: none,
 #  6: Person, 7: no_helmet, 8: no_goggle, 9: no_gloves, 10: no_boots}
 # Matching is case-insensitive and treats '_' and '-' as equivalent.
+# NOTE: the bundled model has no explicit "no_vest" class; CLASS_NO_VEST is
+# kept so models trained with that label are supported. The "none" class
+# (a person wearing no PPE at all) is handled via CLASS_NONE below.
 CLASS_PERSON = "person"
 CLASS_HELMET = "helmet"
 CLASS_VEST = "vest"
 CLASS_NO_HELMET = "no_helmet"
 CLASS_NO_VEST = "no_vest"
+# Class used by some models for a bare worker without any protective gear.
+CLASS_NONE = "none"
 
 # PPE items that must be worn for a person to be considered safe.
 REQUIRED_PPE = [CLASS_HELMET, CLASS_VEST]
+
+# Keys of the per-frame statistics dict produced by the inference worker and
+# consumed by the UI. Shared constants avoid implicit string coupling.
+STAT_KEY_PERSONS = "persons"
+STAT_KEY_SAFE = "safe"
+STAT_KEY_UNSAFE = "unsafe"
+STAT_KEY_MISSING_HELMET = "missing_helmet"
+STAT_KEY_MISSING_VEST = "missing_vest"
+STAT_KEYS = (STAT_KEY_PERSONS, STAT_KEY_SAFE, STAT_KEY_UNSAFE,
+             STAT_KEY_MISSING_HELMET, STAT_KEY_MISSING_VEST)
 
 # Colors (BGR for OpenCV drawing)
 COLOR_SAFE = (0, 200, 0)
 COLOR_WARNING = (0, 165, 255)
 COLOR_DANGER = (0, 0, 255)
-COLOR_PERSON = (255, 200, 0)
 COLOR_TEXT = (255, 255, 255)
 
 # Thresholds
