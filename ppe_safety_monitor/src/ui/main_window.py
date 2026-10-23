@@ -1,11 +1,11 @@
 """Main window UI."""
-import cv2
 from PySide6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
-                             QLabel, QPushButton, QFrame, QGroupBox, QGridLayout)
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QPixmap
+                             QLabel, QPushButton, QGroupBox, QGridLayout,
+                             QComboBox)
+from PySide6.QtCore import Qt
 
-from src.config import WINDOW_TITLE, WINDOW_WIDTH, WINDOW_HEIGHT
+from src.config import (WINDOW_TITLE, WINDOW_WIDTH, WINDOW_HEIGHT,
+                        DEFAULT_CAMERA, MODEL_MODES, DEFAULT_MODEL_MODE)
 from src.threads.camera import CameraStream
 from src.threads.inference import InferenceWorker
 from src.ui.styles import DARK_STYLE
@@ -13,8 +13,10 @@ from src.utils import cv_to_pixmap
 
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, model_mode=DEFAULT_MODEL_MODE):
         super().__init__()
+        self.model_mode = (model_mode if model_mode in MODEL_MODES
+                           else DEFAULT_MODEL_MODE)
         self.setWindowTitle(WINDOW_TITLE)
         self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
         self.setStyleSheet(DARK_STYLE)
@@ -44,6 +46,18 @@ class MainWindow(QMainWindow):
 
         ctrl = QGroupBox("Controls")
         cl = QVBoxLayout(ctrl)
+
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(QLabel("Model weights:"))
+        self.mode_combo = QComboBox()
+        for mode in MODEL_MODES:  # "pt", "onnx"
+            self.mode_combo.addItem(mode.upper(), mode)
+        idx = self.mode_combo.findData(self.model_mode)
+        self.mode_combo.setCurrentIndex(max(idx, 0))
+        self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
+        mode_row.addWidget(self.mode_combo, stretch=1)
+        cl.addLayout(mode_row)
+
         self.start_btn = QPushButton("Start Monitoring")
         self.stop_btn = QPushButton("Stop")
         self.stop_btn.setEnabled(False)
@@ -70,11 +84,24 @@ class MainWindow(QMainWindow):
         self.start_btn.clicked.connect(self.start)
         self.stop_btn.clicked.connect(self.stop)
 
+    def _on_mode_changed(self, index):
+        mode = self.mode_combo.itemData(index)
+        if mode is None or mode == self.model_mode:
+            return
+        if self.running:
+            # Restart monitoring so the new weights backend takes effect.
+            self.stop()
+            self.model_mode = mode
+            self.start()
+        else:
+            self.model_mode = mode
+            self.status.setText(f"Model mode: {mode.upper()}")
+
     def start(self):
         if self.running:
             return
-        self.camera = CameraStream(0)
-        self.inference = InferenceWorker()
+        self.camera = CameraStream(DEFAULT_CAMERA)
+        self.inference = InferenceWorker(mode=self.model_mode)
         self.camera.frame_ready.connect(self.on_frame)
         self.inference.result_ready.connect(self.on_result)
         self.camera.error.connect(self.on_error)
@@ -84,7 +111,8 @@ class MainWindow(QMainWindow):
         self.running = True
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
-        self.status.setText("Running")
+        self.mode_combo.setEnabled(False)
+        self.status.setText(f"Running ({self.model_mode.upper()} weights)")
 
     def on_frame(self, frame):
         if self.inference is not None:
@@ -107,17 +135,18 @@ class MainWindow(QMainWindow):
     def stop(self):
         if not self.running:
             return
-        if self.camera:
-            self.camera.stop()
-            self.camera.wait(5000)
-            self.camera = None
+        # Stop the consumer first so it never receives frames from a camera
+        # that is about to be torn down. stop() already waits for the thread.
         if self.inference:
             self.inference.stop()
-            self.inference.wait(5000)
             self.inference = None
+        if self.camera:
+            self.camera.stop()
+            self.camera = None
         self.running = False
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
+        self.mode_combo.setEnabled(True)
         self.status.setText("Stopped")
 
     def closeEvent(self, event):
