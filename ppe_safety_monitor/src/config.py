@@ -57,3 +57,20 @@ WINDOW_WIDTH = 1280
 WINDOW_HEIGHT = 720
 FPS_TARGET = 30
 
+
+
+LANGUAGES = ["en", "ru", "kk"]
+TRANSLATIONS = {
+    "en": {"title": "PPE Safety Monitor", "start": "Start Monitoring", "stop": "Stop",
+           "persons": "Persons", "safe": "Safe", "unsafe": "Unsafe",
+           "missing_helmet": "Missing Helmet", "missing_vest": "Missing Vest",
+           "idle": "Idle", "running": "Running", "stopped": "Stopped"},
+    "ru": {"title": "Мониторинг СИЗ", "start": "Запустить", "stop": "Остановить",
+           "persons": "Люди", "safe": "Безопасно", "unsafe": "Опасно",
+           "missing_helmet": "Нет каски", "missing_vest": "Нет жилета",
+           "idle": "Ожидание", "running": "Работает", "stopped": "Остановлено"},
+    "kk": {"title": "ЖКҚ бақылау", "start": "Бастау", "stop": "Тоқтату",
+           "persons": "Адамдар", "safe": "Қауіпсіз", "unsafe": "Қауіпті",
+           "missing_helmet": "Каска жоқ", "missing_vest": "Жилет жоқ",
+           "idle": "Күту", "running": "Жұмыс", "stopped": "Тоқтатылды"},
+}

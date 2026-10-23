@@ -58,11 +58,12 @@ class MainWindow(QMainWindow):
         mode_row.addWidget(self.mode_combo, stretch=1)
         cl.addLayout(mode_row)
 
-        self.start_btn = QPushButton("Start Monitoring")
-        self.stop_btn = QPushButton("Stop")
-        self.stop_btn.setEnabled(False)
-        cl.addWidget(self.start_btn)
-        cl.addWidget(self.stop_btn)
+        from src.config import LANGUAGES, TRANSLATIONS
+        self.lang = "en"
+        self.lang_combo = QComboBox()
+        self.lang_combo.addItems(LANGUAGES)
+        cl.addWidget(self.lang_combo)
+        self.lang_combo.currentTextChanged.connect(self.change_lang)
         side.addWidget(ctrl)
 
         stats = QGroupBox("Statistics")
@@ -84,6 +85,15 @@ class MainWindow(QMainWindow):
         self.start_btn.clicked.connect(self.start)
         self.stop_btn.clicked.connect(self.stop)
 
+    def change_lang(self, code):
+        self.lang = code
+        t = TRANSLATIONS[code]
+        self.setWindowTitle(t["title"])
+        # buttons not created? they are; update if exist
+        if hasattr(self, "start_btn"):
+            self.start_btn.setText(t["start"])
+        if hasattr(self, "stop_btn"):
+            self.stop_btn.setText(t["stop"])
     def _on_mode_changed(self, index):
         mode = self.mode_combo.itemData(index)
         if mode is None or mode == self.model_mode:
