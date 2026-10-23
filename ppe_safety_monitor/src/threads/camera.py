@@ -46,17 +46,32 @@ class CameraStream(QThread):
         self._running = True
         is_video_file = isinstance(self.source, str)
         frame_interval = 1.0 / max(FPS_TARGET, 1)
+        reopen_failures = 0
 
         while self._running:
             start = time.monotonic()
             ok, frame = self.cap.read()
             if not ok or frame is None:
                 if is_video_file:
-                    # Loop video files instead of ending the stream.
-                    self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    # Loop video files instead of ending the stream. If even
+                    # the seek/reopen fails, back off instead of hot-spinning.
+                    if self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0):
+                        continue
+                    reopen_failures += 1
+                    if reopen_failures > 3:
+                        self.error.emit(
+                            f"Cannot restart video source: {self.source}")
+                        break
+                    cap = self._open_capture()
+                    if cap is None:
+                        time.sleep(0.5)
+                        continue
+                    self.cap.release()
+                    self.cap = cap
                     continue
                 self.error.emit("Failed to read frame from camera.")
                 break
+            reopen_failures = 0
             self.frame_ready.emit(frame)
             # Pace capture towards FPS_TARGET to avoid unbounded queueing.
             elapsed = time.monotonic() - start

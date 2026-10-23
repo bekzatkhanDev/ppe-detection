@@ -6,7 +6,9 @@ from PySide6.QtCore import Qt
 
 from src.config import (WINDOW_WIDTH, WINDOW_HEIGHT,
                         DEFAULT_CAMERA, MODEL_MODES, DEFAULT_MODEL_MODE,
-                        LANGUAGES, DEFAULT_LANGUAGE, tr)
+                        LANGUAGES, DEFAULT_LANGUAGE, tr,
+                        STAT_KEY_PERSONS, STAT_KEY_SAFE, STAT_KEY_UNSAFE,
+                        STAT_KEY_MISSING_HELMET, STAT_KEY_MISSING_VEST)
 from src.threads.camera import CameraStream
 from src.threads.inference import InferenceWorker
 from src.ui.styles import DARK_STYLE
@@ -34,8 +36,10 @@ class MainWindow(QMainWindow):
         self.camera = None
         self.inference = None
         self.running = False
-        self._last_stats = {"persons": 0, "safe": 0, "unsafe": 0,
-                            "missing_helmet": 0, "missing_vest": 0}
+        self._last_stats = {STAT_KEY_PERSONS: 0, STAT_KEY_SAFE: 0,
+                            STAT_KEY_UNSAFE: 0,
+                            STAT_KEY_MISSING_HELMET: 0,
+                            STAT_KEY_MISSING_VEST: 0}
 
         self._build_ui()
         self._retranslate()
@@ -158,11 +162,14 @@ class MainWindow(QMainWindow):
 
     def _update_stats_labels(self):
         s = self._last_stats
-        self.lbl_persons.setText(f"{self._t('persons')}: {s['persons']}")
-        self.lbl_safe.setText(f"{self._t('safe')}: {s['safe']}")
-        self.lbl_unsafe.setText(f"{self._t('unsafe')}: {s['unsafe']}")
-        self.lbl_nh.setText(f"{self._t('missing_helmet')}: {s['missing_helmet']}")
-        self.lbl_nv.setText(f"{self._t('missing_vest')}: {s['missing_vest']}")
+        self.lbl_persons.setText(
+            f"{self._t('persons')}: {s[STAT_KEY_PERSONS]}")
+        self.lbl_safe.setText(f"{self._t('safe')}: {s[STAT_KEY_SAFE]}")
+        self.lbl_unsafe.setText(f"{self._t('unsafe')}: {s[STAT_KEY_UNSAFE]}")
+        self.lbl_nh.setText(
+            f"{self._t('missing_helmet')}: {s[STAT_KEY_MISSING_HELMET]}")
+        self.lbl_nv.setText(
+            f"{self._t('missing_vest')}: {s[STAT_KEY_MISSING_VEST]}")
 
     def _on_mode_changed(self, index):
         mode = self.mode_combo.itemData(index)

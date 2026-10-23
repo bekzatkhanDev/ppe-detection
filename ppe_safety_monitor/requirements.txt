@@ -5,6 +5,5 @@ numpy>=1.23.0
 
 # Optional: only needed for ONNX mode (--mode onnx).
 # Ultralytics uses onnxruntime under the hood for .onnx weights.
-onnxruntime>=1.15.0 ; python_version >= "3.8"
 onnx>=1.14.0
 onnxruntime>=1.16.0
