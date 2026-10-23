@@ -3,17 +3,41 @@ import os
 
 # Paths
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MODEL_PATH = os.path.join(BASE_DIR, "models", "best.pt")
+MODELS_DIR = os.path.join(BASE_DIR, "models")
+
+# Model weight modes.
+# The app supports two interchangeable backends via Ultralytics YOLO:
+#   * PyTorch mode (.pt)  - full ultralytics + torch stack, most accurate/flexible
+#   * ONNX mode (.onnx)   - lightweight export, faster CPU inference, no torch
+# Select the active mode here (or from the UI / with `python main.py --mode onnx`).
+MODEL_MODES = {
+    "pt": os.path.join(MODELS_DIR, "best.pt"),
+    "onnx": os.path.join(MODELS_DIR, "best.onnx"),
+}
+DEFAULT_MODEL_MODE = "pt"
+# Kept for backwards compatibility; overridden by the selected mode at runtime.
+MODEL_PATH = MODEL_MODES[DEFAULT_MODEL_MODE]
+
+# Device selection for inference: None = auto (CUDA if available else CPU),
+# or force e.g. "cpu" / "cuda:0". Applies to both pt and onnx modes.
+DEVICE = None
 
 # Camera sources: 0 for webcam, or path/URL for video files/streams
 DEFAULT_CAMERA = 0
 
-# Detection classes expected from the trained YOLO model
+# Detection classes expected from the trained YOLO model.
+# The bundled model (models/best.pt / best.onnx) was trained with these names:
+# {0: helmet, 1: gloves, 2: vest, 3: boots, 4: goggles, 5: none,
+#  6: Person, 7: no_helmet, 8: no_goggle, 9: no_gloves, 10: no_boots}
+# Matching is case-insensitive and treats '_' and '-' as equivalent.
 CLASS_PERSON = "person"
 CLASS_HELMET = "helmet"
 CLASS_VEST = "vest"
-CLASS_NO_HELMET = "no-helmet"
-CLASS_NO_VEST = "no-vest"
+CLASS_NO_HELMET = "no_helmet"
+CLASS_NO_VEST = "no_vest"
+
+# PPE items that must be worn for a person to be considered safe.
+REQUIRED_PPE = [CLASS_HELMET, CLASS_VEST]
 
 # Colors (BGR for OpenCV drawing)
 COLOR_SAFE = (0, 200, 0)
@@ -25,7 +49,7 @@ COLOR_TEXT = (255, 255, 255)
 # Thresholds
 CONF_THRESHOLD = 0.4
 IOU_THRESHOLD = 0.45
-OVERLAP_IOU = 0.3  # IoU between person and PPE to consider "worn"
+OVERLAP_RATIO = 0.5  # fraction of the PPE box inside the person box to count as "worn"
 
 # UI
 WINDOW_TITLE = "PPE Safety Monitor"
