@@ -15,6 +15,7 @@ from src.config import (WINDOW_WIDTH, WINDOW_HEIGHT,
 from src.threads.camera import CameraStream
 from src.threads.inference import InferenceWorker
 from src.ui.settings_dialog import SettingsDialog
+from src.ui.user_management_dialog import UserManagementDialog
 from src.ui.styles import DARK_STYLE
 from src.utils import cv_to_pixmap
 
@@ -28,10 +29,15 @@ def _load_saved_language():
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, model_mode=DEFAULT_MODEL_MODE):
+    def __init__(self, model_mode=DEFAULT_MODEL_MODE,
+                 username="guest", role="user"):
         super().__init__()
         self.model_mode = (model_mode if model_mode in MODEL_MODES
                            else DEFAULT_MODEL_MODE)
+        # Authenticated identity (passed in from the login flow).
+        self.username = username or "guest"
+        self.role = role if role in ("admin", "user") else "user"
+        self.is_admin = self.role == "admin"
         self.lang = _load_saved_language()
         self.setWindowTitle(tr(self.lang, "title"))
         self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
@@ -118,6 +124,12 @@ class MainWindow(QMainWindow):
         self.settings_btn.clicked.connect(self.open_settings)
         cl.addWidget(self.settings_btn)
 
+        # 👥 Manage Users button: admin-only (hidden for standard users).
+        self.users_btn = QPushButton()
+        self.users_btn.setObjectName("usersBtn")
+        self.users_btn.clicked.connect(self.open_user_management)
+        cl.addWidget(self.users_btn)
+
         # Current monitoring configuration summary.
         self.cfg_label = QLabel()
         self.cfg_label.setWordWrap(True)
@@ -148,15 +160,44 @@ class MainWindow(QMainWindow):
         side.addWidget(self.status)
         side.addStretch()
 
+        # "Logged in as" label pinned to the bottom corner of the panel.
+        self.user_label = QLabel()
+        self.user_label.setObjectName("userLabel")
+        self.user_label.setStyleSheet(
+            "color:#a6adc8;font-size:12px;padding:4px;")
+        self.user_label.setAlignment(Qt.AlignRight | Qt.AlignBottom)
+        side.addWidget(self.user_label)
+
         self.start_btn.clicked.connect(self.start)
         self.stop_btn.clicked.connect(self.stop)
         self._update_cfg_label()
+        self._apply_role_access()
+
+    # ------------------------------------------------------------------
+    # Role-based access control
+    # ------------------------------------------------------------------
+    def _apply_role_access(self):
+        """Show admin-only controls and the identity label."""
+        role_name = "Admin" if self.is_admin else "User"
+        self.user_label.setText(
+            f"Logged in as: {self.username} ({role_name})")
+        self.settings_btn.setVisible(self.is_admin)
+        self.users_btn.setVisible(self.is_admin)
+
+    def open_user_management(self):
+        """Admin-only: open the user management dialog."""
+        if not self.is_admin:  # programmatic guard, on top of hidden button
+            return
+        dlg = UserManagementDialog(self.username, parent=self)
+        dlg.exec()
 
     # ------------------------------------------------------------------
     # Settings dialog & apply flow
     # ------------------------------------------------------------------
     def open_settings(self):
         """Show the Settings dialog; restart monitoring on Save & Apply."""
+        if not self.is_admin:  # programmatic guard, on top of hidden button
+            return
         dlg = SettingsDialog(parent=self)
         dlg.settings_applied.connect(self.apply_settings)
         dlg.exec()
@@ -223,6 +264,10 @@ class MainWindow(QMainWindow):
         self.start_btn.setText(self._t("start"))
         self.stop_btn.setText(self._t("stop"))
         self.settings_btn.setText(self._t("settings"))
+        role_name = "Admin" if self.is_admin else "User"
+        self.user_label.setText(
+            f"{self._t('logged_in_as')}: {self.username} ({role_name})")
+        self.users_btn.setText(self._t("manage_users"))
         if not self.running:
             self.video_label.setText(self._t("camera_not_started"))
             self.status.setText(self._t("idle"))
