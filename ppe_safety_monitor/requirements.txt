@@ -1,0 +1,9 @@
+PySide6>=6.5.0
+opencv-python>=4.8.0
+ultralytics>=8.0.0
+numpy>=1.23.0
+
+# Optional: only needed for ONNX mode (--mode onnx).
+# Ultralytics uses onnxruntime under the hood for .onnx weights.
+onnx>=1.14.0
+onnxruntime>=1.16.0
