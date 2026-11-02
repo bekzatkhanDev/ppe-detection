@@ -34,8 +34,15 @@ STAT_KEYS_BY_ITEM = {
 
 # Overlay translation keys per gear item; fall back to a generic label so a
 # newly added class never crashes the drawing code.
-_OV_WORN_KEYS = {"helmet": "ov_helmet", "vest": "ov_vest"}
-_OV_MISSING_KEYS = {"helmet": "ov_no_helmet_box", "vest": "ov_no_vest_box"}
+_OV_WORN_KEYS = {"helmet": "ov_helmet", "vest": "ov_vest",
+                 "gloves": "ov_gloves", "boots": "ov_boots",
+                 "goggles": "ov_goggles"}
+_OV_MISSING_KEYS = {"helmet": "ov_no_helmet_box", "vest": "ov_no_vest_box",
+                    "gloves": "ov_no_gloves_box", "boots": "ov_no_boots_box",
+                    "goggles": "ov_no_goggles_box"}
+_OV_MISSING_SHORT_KEYS = {"helmet": "ov_no_helmet", "vest": "ov_no_vest",
+                          "gloves": "ov_no_gloves", "boots": "ov_no_boots",
+                          "goggles": "ov_no_goggles"}
 
 
 def _ov_worn(lang, item):
@@ -50,9 +57,8 @@ def _ov_missing(lang, item):
 
 def _ov_missing_short(lang, item):
     """Short form used inside the person's violation label."""
-    key = f"ov_no_{item}"
-    return tr(lang, key) if key in ("ov_no_helmet", "ov_no_vest") \
-        else f"no {item}"
+    key = _OV_MISSING_SHORT_KEYS.get(item)
+    return tr(lang, key) if key else f"no {item}"
 
 
 def resolve_model_path(mode=None, model_path=None):
