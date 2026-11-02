@@ -61,6 +61,59 @@ def overlap_ratio(box_a, box_b):
     return inter_area / area_b
 
 
+# ---------------------------------------------------------------------------
+# Anatomical Zonal Heuristics
+# ---------------------------------------------------------------------------
+# Fractional vertical bands of the Person bounding box used to decide whether
+# a detected gear box plausibly belongs to that person.  Each entry maps a PPE
+# class to (top_fraction, bottom_fraction) measured from the top of the box:
+#   helmet/goggles -> head region      (top 30%)
+#   vest           -> torso            (40% .. 70%)
+#   gloves         -> wide band; hands move around (30% .. 80%)
+#   boots          -> feet             (bottom 20%)
+ZONE_RANGES = {
+    "helmet":  (0.00, 0.30),
+    "goggles": (0.00, 0.30),
+    "vest":    (0.40, 0.70),
+    "gloves":  (0.30, 0.80),
+    "boots":   (0.80, 1.00),
+}
+
+# Fraction of the gear box that must fall inside the anatomical zone for the
+# match to count (same semantics as OVERLAP_RATIO but zone-gated).
+ZONE_CONTAINMENT_RATIO = 0.5
+
+
+def get_zone_box(person_box, gear_type):
+    """Return the (x1, y1, x2, y2) anatomical sub-band of ``person_box``.
+
+    Unknown gear types fall back to the full person box so behavior degrades
+    gracefully instead of rejecting every detection.
+    """
+    x1, y1, x2, y2 = person_box
+    top_frac, bot_frac = ZONE_RANGES.get(normalize_class_name(gear_type),
+                                         (0.0, 1.0))
+    h = max(0.0, y2 - y1)
+    return (x1, y1 + top_frac * h, x2, y1 + bot_frac * h)
+
+
+def check_regional_overlap(person_box, gear_box, gear_type):
+    """True if ``gear_box`` sits in the correct anatomical zone of ``person_box``.
+
+    Rules (see ZONE_RANGES):
+      * Helmet & Goggles: gear overlaps the Top 30% of the person box.
+      * Vest:             gear overlaps the Middle 40%-70%.
+      * Gloves:           gear overlaps the Middle 30%-80% (wide band).
+      * Boots:            gear overlaps the Bottom 20%.
+
+    The containment test uses the gear box's own area as the denominator, so
+    small extremity items (gloves/boots) are judged by where they sit on the
+    body rather than their size relative to the whole person.
+    """
+    zone = get_zone_box(person_box, gear_type)
+    return overlap_ratio(zone, gear_box) >= ZONE_CONTAINMENT_RATIO
+
+
 def cv_to_pixmap(frame):
     """Convert an OpenCV BGR frame to QPixmap (deep copy, safe across threads)."""
     if frame is None:

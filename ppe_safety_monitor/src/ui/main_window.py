@@ -6,11 +6,16 @@ from PySide6.QtCore import Qt
 
 from src.config import (WINDOW_WIDTH, WINDOW_HEIGHT,
                         DEFAULT_CAMERA, MODEL_MODES, DEFAULT_MODEL_MODE,
-                        LANGUAGES, DEFAULT_LANGUAGE, tr,
+                        LANGUAGES, DEFAULT_LANGUAGE, tr, load_settings,
+                        save_settings, PPE_CLASSES,
                         STAT_KEY_PERSONS, STAT_KEY_SAFE, STAT_KEY_UNSAFE,
-                        STAT_KEY_MISSING_HELMET, STAT_KEY_MISSING_VEST)
+                        STAT_KEY_MISSING_HELMET, STAT_KEY_MISSING_VEST,
+                        STAT_KEY_MISSING_GLOVES, STAT_KEY_MISSING_GOGGLES,
+                        STAT_KEY_MISSING_BOOTS)
 from src.threads.camera import CameraStream
 from src.threads.inference import InferenceWorker
+from src.ui.settings_dialog import SettingsDialog
+from src.ui.user_management_dialog import UserManagementDialog
 from src.ui.styles import DARK_STYLE
 from src.utils import cv_to_pixmap
 
@@ -24,22 +29,37 @@ def _load_saved_language():
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, model_mode=DEFAULT_MODEL_MODE):
+    def __init__(self, model_mode=DEFAULT_MODEL_MODE,
+                 username="guest", role="user"):
         super().__init__()
         self.model_mode = (model_mode if model_mode in MODEL_MODES
                            else DEFAULT_MODEL_MODE)
+        # Authenticated identity (passed in from the login flow).
+        self.username = username or "guest"
+        self.role = role if role in ("admin", "user") else "user"
+        self.is_admin = self.role == "admin"
         self.lang = _load_saved_language()
         self.setWindowTitle(tr(self.lang, "title"))
         self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
         self.setStyleSheet(DARK_STYLE)
 
-        self.camera = None
-        self.inference = None
+        # Active monitoring configuration, loaded from settings.json
+        # (falls back to defaults: camera 0, helmet + vest).
+        settings = load_settings()
+        self.camera_sources = list(settings["camera_sources"])
+        self.ppe_to_monitor = list(settings["ppe_to_monitor"])
+
+        self.cameras = []       # list of CameraStream
+        self.inferences = []    # list of InferenceWorker
         self.running = False
+        self._restarting = False
         self._last_stats = {STAT_KEY_PERSONS: 0, STAT_KEY_SAFE: 0,
                             STAT_KEY_UNSAFE: 0,
                             STAT_KEY_MISSING_HELMET: 0,
-                            STAT_KEY_MISSING_VEST: 0}
+                            STAT_KEY_MISSING_VEST: 0,
+                            STAT_KEY_MISSING_GLOVES: 0,
+                            STAT_KEY_MISSING_GOGGLES: 0,
+                            STAT_KEY_MISSING_BOOTS: 0}
 
         self._build_ui()
         self._retranslate()
@@ -57,7 +77,7 @@ class MainWindow(QMainWindow):
         self.video_label.setStyleSheet("background-color:#11111b;border:1px solid #45475a;border-radius:8px;")
         layout.addWidget(self.video_label, stretch=3)
 
-        # Side panel
+        # Side panel (20% right column)
         side = QVBoxLayout()
         layout.addLayout(side, stretch=1)
 
@@ -97,6 +117,25 @@ class MainWindow(QMainWindow):
         btn_row.addWidget(self.start_btn)
         btn_row.addWidget(self.stop_btn)
         cl.addLayout(btn_row)
+
+        # ⚙️ Settings button: opens the camera / PPE selection dialog.
+        self.settings_btn = QPushButton()
+        self.settings_btn.setObjectName("settingsBtn")
+        self.settings_btn.clicked.connect(self.open_settings)
+        cl.addWidget(self.settings_btn)
+
+        # 👥 Manage Users button: admin-only (hidden for standard users).
+        self.users_btn = QPushButton()
+        self.users_btn.setObjectName("usersBtn")
+        self.users_btn.clicked.connect(self.open_user_management)
+        cl.addWidget(self.users_btn)
+
+        # Current monitoring configuration summary.
+        self.cfg_label = QLabel()
+        self.cfg_label.setWordWrap(True)
+        self.cfg_label.setStyleSheet("color:#89b4fa;")
+        cl.addWidget(self.cfg_label)
+
         side.addWidget(self.ctrl_group)
 
         self.stats_group = QGroupBox()
@@ -106,17 +145,92 @@ class MainWindow(QMainWindow):
         self.lbl_unsafe = QLabel()
         self.lbl_nh = QLabel()
         self.lbl_nv = QLabel()
-        for i, w in enumerate([self.lbl_persons, self.lbl_safe, self.lbl_unsafe,
-                                self.lbl_nh, self.lbl_nv]):
+        self.lbl_ng = QLabel()
+        self.lbl_ngo = QLabel()
+        self.lbl_nb = QLabel()
+        self._stat_labels = [self.lbl_persons, self.lbl_safe, self.lbl_unsafe,
+                             self.lbl_nh, self.lbl_nv, self.lbl_ng,
+                             self.lbl_ngo, self.lbl_nb]
+        for i, w in enumerate(self._stat_labels):
             gl.addWidget(w, i, 0)
         side.addWidget(self.stats_group)
 
         self.status = QLabel()
+        self.status.setWordWrap(True)
         side.addWidget(self.status)
         side.addStretch()
 
+        # "Logged in as" label pinned to the bottom corner of the panel.
+        self.user_label = QLabel()
+        self.user_label.setObjectName("userLabel")
+        self.user_label.setStyleSheet(
+            "color:#a6adc8;font-size:12px;padding:4px;")
+        self.user_label.setAlignment(Qt.AlignRight | Qt.AlignBottom)
+        side.addWidget(self.user_label)
+
         self.start_btn.clicked.connect(self.start)
         self.stop_btn.clicked.connect(self.stop)
+        self._update_cfg_label()
+        self._apply_role_access()
+
+    # ------------------------------------------------------------------
+    # Role-based access control
+    # ------------------------------------------------------------------
+    def _apply_role_access(self):
+        """Show admin-only controls and the identity label."""
+        role_name = "Admin" if self.is_admin else "User"
+        self.user_label.setText(
+            f"Logged in as: {self.username} ({role_name})")
+        self.settings_btn.setVisible(self.is_admin)
+        self.users_btn.setVisible(self.is_admin)
+
+    def open_user_management(self):
+        """Admin-only: open the user management dialog."""
+        if not self.is_admin:  # programmatic guard, on top of hidden button
+            return
+        dlg = UserManagementDialog(self.username, parent=self)
+        dlg.exec()
+
+    # ------------------------------------------------------------------
+    # Settings dialog & apply flow
+    # ------------------------------------------------------------------
+    def open_settings(self):
+        """Show the Settings dialog; restart monitoring on Save & Apply."""
+        if not self.is_admin:  # programmatic guard, on top of hidden button
+            return
+        dlg = SettingsDialog(parent=self)
+        dlg.settings_applied.connect(self.apply_settings)
+        dlg.exec()
+
+    def apply_settings(self, camera_sources, ppe_to_monitor):
+        """Persist new settings and safely restart threads with them."""
+        if not camera_sources:
+            camera_sources = [DEFAULT_CAMERA]
+        self.camera_sources = list(camera_sources)
+        self.ppe_to_monitor = list(ppe_to_monitor)
+        try:
+            save_settings({"camera_sources": self.camera_sources,
+                           "ppe_to_monitor": self.ppe_to_monitor})
+        except OSError as exc:
+            self.on_error(f"Could not save settings: {exc}")
+        self._update_cfg_label()
+        if self.running:
+            # Stop current camera/inference threads, then relaunch with the
+            # newly selected sources and gear. Guard against re-entrancy.
+            if self._restarting:
+                return
+            self._restarting = True
+            try:
+                self.stop()
+                self.start()
+            finally:
+                self._restarting = False
+        self.status.setText(self._t("settings_applied"))
+
+    def _update_cfg_label(self):
+        cams = ", ".join(str(c) for c in self.camera_sources)
+        gear = ", ".join(p.capitalize() for p in self.ppe_to_monitor) or "-"
+        self.cfg_label.setText(f"Cameras: {cams}\nPPE: {gear}")
 
     # ------------------------------------------------------------------
     # Language switching
@@ -149,6 +263,11 @@ class MainWindow(QMainWindow):
         self.lbl_lang.setText(self._t("language"))
         self.start_btn.setText(self._t("start"))
         self.stop_btn.setText(self._t("stop"))
+        self.settings_btn.setText(self._t("settings"))
+        role_name = "Admin" if self.is_admin else "User"
+        self.user_label.setText(
+            f"{self._t('logged_in_as')}: {self.username} ({role_name})")
+        self.users_btn.setText(self._t("manage_users"))
         if not self.running:
             self.video_label.setText(self._t("camera_not_started"))
             self.status.setText(self._t("idle"))
@@ -170,6 +289,27 @@ class MainWindow(QMainWindow):
             f"{self._t('missing_helmet')}: {s[STAT_KEY_MISSING_HELMET]}")
         self.lbl_nv.setText(
             f"{self._t('missing_vest')}: {s[STAT_KEY_MISSING_VEST]}")
+        self.lbl_ng.setText(
+            f"{self._t('missing_gloves')}: {s.get(STAT_KEY_MISSING_GLOVES, 0)}")
+        self.lbl_ngo.setText(
+            f"{self._t('missing_goggles')}: {s.get(STAT_KEY_MISSING_GOGGLES, 0)}")
+        self.lbl_nb.setText(
+            f"{self._t('missing_boots')}: {s.get(STAT_KEY_MISSING_BOOTS, 0)}")
+        # Only show stat rows for gear actually being monitored.
+        missing_keys_by_item = {
+            "helmet": STAT_KEY_MISSING_HELMET, "vest": STAT_KEY_MISSING_VEST,
+            "gloves": STAT_KEY_MISSING_GLOVES,
+            "goggles": STAT_KEY_MISSING_GOGGLES,
+            "boots": STAT_KEY_MISSING_BOOTS}
+        label_by_key = {
+            STAT_KEY_MISSING_HELMET: self.lbl_nh,
+            STAT_KEY_MISSING_VEST: self.lbl_nv,
+            STAT_KEY_MISSING_GLOVES: self.lbl_ng,
+            STAT_KEY_MISSING_GOGGLES: self.lbl_ngo,
+            STAT_KEY_MISSING_BOOTS: self.lbl_nb}
+        for item in PPE_CLASSES:
+            key = missing_keys_by_item[item]
+            label_by_key[key].setVisible(item in self.ppe_to_monitor)
 
     def _on_mode_changed(self, index):
         mode = self.mode_combo.itemData(index)
@@ -187,14 +327,21 @@ class MainWindow(QMainWindow):
     def start(self):
         if self.running:
             return
-        self.camera = CameraStream(DEFAULT_CAMERA)
-        self.inference = InferenceWorker(mode=self.model_mode, lang=self.lang)
-        self.camera.frame_ready.connect(self.on_frame)
-        self.inference.result_ready.connect(self.on_result)
-        self.camera.error.connect(self.on_error)
-        self.inference.error.connect(self.on_error)
-        self.camera.start()
-        self.inference.start()
+        self.cameras = []
+        self.inferences = []
+        for src in self.camera_sources:
+            camera = CameraStream(src)
+            inference = InferenceWorker(mode=self.model_mode, lang=self.lang,
+                                        ppe_to_monitor=self.ppe_to_monitor)
+            camera.frame_ready.connect(
+                lambda frame, inf=inference: inf.submit_frame(frame))
+            inference.result_ready.connect(self.on_result)
+            camera.error.connect(self.on_error)
+            inference.error.connect(self.on_error)
+            camera.start()
+            inference.start()
+            self.cameras.append(camera)
+            self.inferences.append(inference)
         self.running = True
         self.video_label.clear()
         self.start_btn.setEnabled(False)
@@ -202,10 +349,6 @@ class MainWindow(QMainWindow):
         self.mode_combo.setEnabled(False)
         self.lang_combo.setEnabled(False)
         self.status.setText(self._t("running", mode=self.model_mode.upper()))
-
-    def on_frame(self, frame):
-        if self.inference is not None:
-            self.inference.submit_frame(frame)
 
     def on_result(self, frame, stats):
         pix = cv_to_pixmap(frame)
@@ -221,14 +364,14 @@ class MainWindow(QMainWindow):
     def stop(self):
         if not self.running:
             return
-        # Stop the consumer first so it never receives frames from a camera
-        # that is about to be torn down. stop() already waits for the thread.
-        if self.inference:
-            self.inference.stop()
-            self.inference = None
-        if self.camera:
-            self.camera.stop()
-            self.camera = None
+        # Stop the consumers first so they never receive frames from a
+        # camera that is about to be torn down. stop() waits for each thread.
+        for inference in self.inferences:
+            inference.stop()
+        self.inferences = []
+        for camera in self.cameras:
+            camera.stop()
+        self.cameras = []
         self.running = False
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
