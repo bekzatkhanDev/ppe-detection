@@ -34,13 +34,36 @@ DEFAULT_CAMERA = 0
 CLASS_PERSON = "person"
 CLASS_HELMET = "helmet"
 CLASS_VEST = "vest"
+CLASS_GLOVES = "gloves"
+CLASS_GOGGLES = "goggles"
+CLASS_BOOTS = "boots"
 CLASS_NO_HELMET = "no_helmet"
 CLASS_NO_VEST = "no_vest"
+CLASS_NO_GLOVES = "no_gloves"
+CLASS_NO_GOGGLES = "no_goggles"
+# The bundled dataset uses the singular spelling "no_goggle".
+CLASS_NO_GOGGLE_SINGULAR = "no_goggle"
+CLASS_NO_BOOTS = "no_boots"
 # Class used by some models for a bare worker without any protective gear.
 CLASS_NONE = "none"
 
-# PPE items that must be worn for a person to be considered safe.
+# All PPE gear the app can monitor (order used in the Settings dialog).
+PPE_CLASSES = [CLASS_HELMET, CLASS_VEST, CLASS_GLOVES, CLASS_GOGGLES, CLASS_BOOTS]
+
+# Default PPE items that must be worn for a person to be considered safe.
+# Overridable at runtime via settings.json ("ppe_to_monitor").
 REQUIRED_PPE = [CLASS_HELMET, CLASS_VEST]
+
+# Map of native "missing gear" YOLO classes -> the PPE item they confirm.
+# Used as secondary evidence when the anatomical-zone heuristic finds no gear.
+NO_PPE_MAP = {
+    CLASS_NO_HELMET: CLASS_HELMET,
+    CLASS_NO_VEST: CLASS_VEST,
+    CLASS_NO_GLOVES: CLASS_GLOVES,
+    CLASS_NO_GOGGLES: CLASS_GOGGLES,
+    CLASS_NO_GOGGLE_SINGULAR: CLASS_GOGGLES,
+    CLASS_NO_BOOTS: CLASS_BOOTS,
+}
 
 # Keys of the per-frame statistics dict produced by the inference worker and
 # consumed by the UI. Shared constants avoid implicit string coupling.
@@ -49,8 +72,13 @@ STAT_KEY_SAFE = "safe"
 STAT_KEY_UNSAFE = "unsafe"
 STAT_KEY_MISSING_HELMET = "missing_helmet"
 STAT_KEY_MISSING_VEST = "missing_vest"
+STAT_KEY_MISSING_GLOVES = "missing_gloves"
+STAT_KEY_MISSING_GOGGLES = "missing_goggles"
+STAT_KEY_MISSING_BOOTS = "missing_boots"
 STAT_KEYS = (STAT_KEY_PERSONS, STAT_KEY_SAFE, STAT_KEY_UNSAFE,
-             STAT_KEY_MISSING_HELMET, STAT_KEY_MISSING_VEST)
+             STAT_KEY_MISSING_HELMET, STAT_KEY_MISSING_VEST,
+             STAT_KEY_MISSING_GLOVES, STAT_KEY_MISSING_GOGGLES,
+             STAT_KEY_MISSING_BOOTS)
 
 # Colors (BGR for OpenCV drawing)
 COLOR_SAFE = (0, 200, 0)
@@ -62,6 +90,75 @@ COLOR_TEXT = (255, 255, 255)
 CONF_THRESHOLD = 0.4
 IOU_THRESHOLD = 0.45
 OVERLAP_RATIO = 0.5  # fraction of the PPE box inside the person box to count as "worn"
+
+# Size/noise filtering: YOLO often hallucinates tiny boxes for small gear
+# (gloves/boots) from background texture. Any gear box smaller than this
+# (width OR height, in pixels) is ignored during detection parsing.
+MIN_GEAR_BOX_SIZE = 15
+
+# ---- Settings persistence (settings.json in the app root) -----------------
+SETTINGS_FILE = os.path.join(BASE_DIR, "settings.json")
+
+DEFAULT_SETTINGS = {
+    "camera_sources": [DEFAULT_CAMERA],
+    "ppe_to_monitor": list(REQUIRED_PPE),
+}
+
+
+def get_asset_path(*relative_parts):
+    """Return a path inside the app directory.
+
+    When frozen with PyInstaller, resources bundled by the spec live under
+    ``sys._MEIPASS``, but *writable* user data (settings.json, ppe_app.db)
+    must live next to the executable so it persists between runs. This
+    helper resolves the correct base for each case:
+      * frozen exe   -> directory containing the executable
+      * plain script -> project BASE_DIR
+    """
+    import sys
+    if getattr(sys, "frozen", False):
+        base = os.path.dirname(sys.executable)
+    else:
+        base = BASE_DIR
+    return os.path.join(base, *relative_parts)
+
+
+def load_settings():
+    """Load settings.json; fall back to sensible defaults when missing/corrupt."""
+    import json
+    path = get_asset_path("settings.json")
+    settings = {
+        "camera_sources": list(DEFAULT_SETTINGS["camera_sources"]),
+        "ppe_to_monitor": list(DEFAULT_SETTINGS["ppe_to_monitor"]),
+    }
+    if not os.path.exists(path):
+        return settings
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        cams = data.get("camera_sources")
+        if isinstance(cams, list) and cams:
+            settings["camera_sources"] = [int(c) for c in cams]
+        ppe = data.get("ppe_to_monitor")
+        if isinstance(ppe, list):
+            allowed = {c.lower() for c in PPE_CLASSES}
+            cleaned = [str(p).strip().lower() for p in ppe
+                       if str(p).strip().lower() in allowed]
+            settings["ppe_to_monitor"] = cleaned
+    except (OSError, ValueError, TypeError):
+        pass  # corrupt/unreadable file -> keep defaults
+    return settings
+
+
+def save_settings(data):
+    """Atomically write settings dict to settings.json in the app root."""
+    import json
+    path = get_asset_path("settings.json")
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, indent=2)
+    os.replace(tmp, path)
+    return path
 
 # UI
 WINDOW_TITLE = "PPE Safety Monitor"
