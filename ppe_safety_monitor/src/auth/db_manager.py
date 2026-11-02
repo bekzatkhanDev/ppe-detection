@@ -28,8 +28,9 @@ SALT_BYTES = 16
 ROLE_ADMIN = "admin"
 ROLE_USER = "user"
 
-DEFAULT_ADMIN_USERNAME = "admin"
-DEFAULT_ADMIN_PASSWORD = "admin123"
+
+DEFAULT_ADMIN_USERNAME = os.getenv("admin")
+DEFAULT_ADMIN_PASSWORD = os.getenv("admin_password")
 
 
 # ---------------------------------------------------------------------------
