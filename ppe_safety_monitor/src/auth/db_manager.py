@@ -81,9 +81,17 @@ def init_db():
     First-run logic: if the table ends up completely empty, seed a default
     Admin account (admin / admin123) and return True so callers can warn
     the user to change that password.
+
+    Robustness notes:
+    * The seeding is done with an explicit INSERT here instead of calling
+      create_user(), so it cannot be tripped by module-level constant
+      tampering or import-order issues in packaged builds.
+    * If the database file exists but its ``users`` table is missing
+      (e.g. a stale/corrupt ppe_app.db left next to an older .exe), the
+      table is created and seeding proceeds normally.
     """
-    created_default = False
-    with _connect() as conn:
+    conn = _connect()
+    try:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS users (
@@ -95,11 +103,32 @@ def init_db():
             """
         )
         cur = conn.execute("SELECT COUNT(*) AS n FROM users")
-        if cur.fetchone()["n"] == 0:
-            create_user(DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD,
-                        ROLE_ADMIN, conn=conn)
-            created_default = True
-    return created_default
+        if cur.fetchone()["n"] > 0:
+            return False
+        username = (DEFAULT_ADMIN_USERNAME or "").strip()
+        password = DEFAULT_ADMIN_PASSWORD or ""
+        if not username or not password:
+            # Defensive: never let bad constants crash app startup.
+            raise RuntimeError(
+                "Cannot seed default admin: DEFAULT_ADMIN_USERNAME/"
+                "DEFAULT_ADMIN_PASSWORD are empty.")
+        conn.execute(
+            "INSERT INTO users (username, password_hash, role) VALUES (?,?,?)",
+            (username, hash_password(password), ROLE_ADMIN),
+        )
+        conn.commit()
+        return True
+    except sqlite3.DatabaseError as exc:
+        # Corrupt/unreadable db file -> fail with a clear, actionable message
+        # instead of a confusing traceback from deep inside the seeding code.
+        raise RuntimeError(
+            f"Authentication database at {db_path()!r} appears corrupt or "
+            f"incompatible ({exc}). Close the app, delete/rename this file, "
+            "and start again — a fresh database with the default admin "
+            "account will be created automatically."
+        ) from exc
+    finally:
+        conn.close()
 
 
 # ---------------------------------------------------------------------------

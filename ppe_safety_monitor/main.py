@@ -23,7 +23,9 @@ def parse_args(argv):
 
 def main():
     args = parse_args(sys.argv[1:])
-    app = QApplication(sys.argv)
+    # Reuse an existing QApplication if one is present (embedded/test runs);
+    # creating a second instance raises a RuntimeError in PySide6.
+    app = QApplication.instance() or QApplication(sys.argv)
 
     username, role = "guest", "user"
     if not args.no_login:
